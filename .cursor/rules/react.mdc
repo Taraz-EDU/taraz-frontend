@@ -1,0 +1,337 @@
+---
+description: React component patterns, hooks, and best practices
+globs: ["**/*.tsx", "**/*.jsx", "components/**/*", "hooks/**/*"]
+alwaysApply: true
+---
+
+# React Rules
+
+## Component Structure
+- Use functional components with hooks
+- Keep components small and focused (under 200 lines)
+- Extract complex logic into custom hooks
+- Use proper TypeScript interfaces for props
+
+```typescript
+// Good: Component with proper typing
+interface ButtonProps {
+  children: React.ReactNode;
+  variant?: 'primary' | 'secondary';
+  size?: 'sm' | 'md' | 'lg';
+  onClick?: () => void;
+  disabled?: boolean;
+}
+
+export function Button({ 
+  children, 
+  variant = 'primary', 
+  size = 'md', 
+  onClick,
+  disabled = false 
+}: ButtonProps) {
+  return (
+    <button
+      className={`btn btn-${variant} btn-${size}`}
+      onClick={onClick}
+      disabled={disabled}
+    >
+      {children}
+    </button>
+  );
+}
+```
+
+## Hooks Best Practices
+- Use hooks at the top level of components
+- Create custom hooks for reusable logic
+- Use proper dependency arrays
+- Avoid unnecessary re-renders
+
+```typescript
+// Good: Custom hook
+function useLocalStorage<T>(key: string, initialValue: T) {
+  const [storedValue, setStoredValue] = useState<T>(() => {
+    try {
+      const item = window.localStorage.getItem(key);
+      return item ? JSON.parse(item) : initialValue;
+    } catch (error) {
+      return initialValue;
+    }
+  });
+
+  const setValue = useCallback((value: T | ((val: T) => T)) => {
+    try {
+      const valueToStore = value instanceof Function ? value(storedValue) : value;
+      setStoredValue(valueToStore);
+      window.localStorage.setItem(key, JSON.stringify(valueToStore));
+    } catch (error) {
+      console.error(error);
+    }
+  }, [key, storedValue]);
+
+  return [storedValue, setValue] as const;
+}
+
+// Good: Component using custom hook
+function UserPreferences() {
+  const [theme, setTheme] = useLocalStorage('theme', 'light');
+  
+  return (
+    <select value={theme} onChange={(e) => setTheme(e.target.value)}>
+      <option value="light">Light</option>
+      <option value="dark">Dark</option>
+    </select>
+  );
+}
+```
+
+## State Management
+- Use `useState` for local component state
+- Use `useReducer` for complex state logic
+- Consider context for shared state
+- Use external state management (Zustand, Redux Toolkit) for global state
+
+```typescript
+// Good: useReducer for complex state
+interface State {
+  loading: boolean;
+  data: User[] | null;
+  error: string | null;
+}
+
+type Action = 
+  | { type: 'FETCH_START' }
+  | { type: 'FETCH_SUCCESS'; payload: User[] }
+  | { type: 'FETCH_ERROR'; payload: string };
+
+function userReducer(state: State, action: Action): State {
+  switch (action.type) {
+    case 'FETCH_START':
+      return { ...state, loading: true, error: null };
+    case 'FETCH_SUCCESS':
+      return { loading: false, data: action.payload, error: null };
+    case 'FETCH_ERROR':
+      return { loading: false, data: null, error: action.payload };
+    default:
+      return state;
+  }
+}
+
+function UserList() {
+  const [state, dispatch] = useReducer(userReducer, {
+    loading: false,
+    data: null,
+    error: null
+  });
+
+  // Component logic...
+}
+```
+
+## Performance Optimization
+- Use `React.memo` for expensive components
+- Use `useCallback` and `useMemo` appropriately
+- Avoid creating objects/functions in render
+- Use `React.lazy` for code splitting
+
+```typescript
+// Good: Memoized component
+const ExpensiveComponent = React.memo(function ExpensiveComponent({ 
+  data, 
+  onUpdate 
+}: {
+  data: ComplexData;
+  onUpdate: (id: string) => void;
+}) {
+  const processedData = useMemo(() => {
+    return data.map(item => ({
+      ...item,
+      processed: expensiveCalculation(item)
+    }));
+  }, [data]);
+
+  const handleUpdate = useCallback((id: string) => {
+    onUpdate(id);
+  }, [onUpdate]);
+
+  return <div>{/* Render processed data */}</div>;
+});
+
+// Good: Lazy loading
+const LazyComponent = React.lazy(() => import('./LazyComponent'));
+
+function App() {
+  return (
+    <Suspense fallback={<div>Loading...</div>}>
+      <LazyComponent />
+    </Suspense>
+  );
+}
+```
+
+## Event Handling
+- Use proper event types
+- Implement proper event delegation
+- Handle async operations correctly
+
+```typescript
+// Good: Proper event handling
+function Form() {
+  const [email, setEmail] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    setLoading(true);
+    
+    try {
+      await submitForm({ email });
+      // Handle success
+    } catch (error) {
+      // Handle error
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <form onSubmit={handleSubmit}>
+      <input
+        type="email"
+        value={email}
+        onChange={(e) => setEmail(e.target.value)}
+        required
+      />
+      <button type="submit" disabled={loading}>
+        {loading ? 'Submitting...' : 'Submit'}
+      </button>
+    </form>
+  );
+}
+```
+
+## Context Usage
+- Create typed context with proper defaults
+- Use context for truly global state
+- Split contexts by domain
+
+```typescript
+// Good: Typed context
+interface ThemeContextType {
+  theme: 'light' | 'dark';
+  toggleTheme: () => void;
+}
+
+const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
+
+export function ThemeProvider({ children }: { children: React.ReactNode }) {
+  const [theme, setTheme] = useState<'light' | 'dark'>('light');
+  
+  const toggleTheme = useCallback(() => {
+    setTheme(prev => prev === 'light' ? 'dark' : 'light');
+  }, []);
+
+  return (
+    <ThemeContext.Provider value={{ theme, toggleTheme }}>
+      {children}
+    </ThemeContext.Provider>
+  );
+}
+
+export function useTheme() {
+  const context = useContext(ThemeContext);
+  if (context === undefined) {
+    throw new Error('useTheme must be used within a ThemeProvider');
+  }
+  return context;
+}
+```
+
+## Error Boundaries
+- Implement error boundaries for graceful error handling
+- Use proper error logging
+- Provide fallback UI
+
+```typescript
+// Good: Error boundary
+interface ErrorBoundaryState {
+  hasError: boolean;
+  error?: Error;
+}
+
+class ErrorBoundary extends Component<
+  { children: React.ReactNode; fallback?: React.ComponentType<{ error: Error }> },
+  ErrorBoundaryState
+> {
+  constructor(props: any) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError(error: Error): ErrorBoundaryState {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    console.error('Error caught by boundary:', error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      const FallbackComponent = this.props.fallback;
+      return FallbackComponent ? (
+        <FallbackComponent error={this.state.error!} />
+      ) : (
+        <div>Something went wrong.</div>
+      );
+    }
+
+    return this.props.children;
+  }
+}
+```
+
+## Form Handling
+- Use react-hook-form for complex forms
+- Implement proper validation
+- Handle form state correctly
+
+```typescript
+// Good: Form with react-hook-form
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
+
+const schema = z.object({
+  name: z.string().min(1, 'Name is required'),
+  email: z.string().email('Invalid email'),
+  age: z.number().min(18, 'Must be 18 or older')
+});
+
+type FormData = z.infer<typeof schema>;
+
+function UserForm() {
+  const { register, handleSubmit, formState: { errors } } = useForm<FormData>({
+    resolver: zodResolver(schema)
+  });
+
+  const onSubmit = (data: FormData) => {
+    console.log(data);
+  };
+
+  return (
+    <form onSubmit={handleSubmit(onSubmit)}>
+      <input {...register('name')} />
+      {errors.name && <span>{errors.name.message}</span>}
+      
+      <input {...register('email')} />
+      {errors.email && <span>{errors.email.message}</span>}
+      
+      <input {...register('age', { valueAsNumber: true })} />
+      {errors.age && <span>{errors.age.message}</span>}
+      
+      <button type="submit">Submit</button>
+    </form>
+  );
+}
+```

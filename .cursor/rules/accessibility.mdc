@@ -1,0 +1,426 @@
+---
+description: Accessibility best practices and WCAG compliance
+globs: ["**/*.tsx", "**/*.jsx", "components/**/*"]
+alwaysApply: true
+---
+
+# Accessibility Rules
+
+## Semantic HTML
+- Use proper HTML elements for their intended purpose
+- Implement proper heading hierarchy (h1, h2, h3, etc.)
+- Use semantic elements: nav, main, section, article, aside, header, footer
+- Ensure proper document structure
+
+```typescript
+// Good: Semantic HTML structure
+function Layout({ children }: { children: React.ReactNode }) {
+  return (
+    <div>
+      <header role="banner">
+        <nav role="navigation" aria-label="Main navigation">
+          <ul>
+            <li><a href="/">Home</a></li>
+            <li><a href="/about">About</a></li>
+            <li><a href="/contact">Contact</a></li>
+          </ul>
+        </nav>
+      </header>
+      
+      <main role="main">
+        {children}
+      </main>
+      
+      <footer role="contentinfo">
+        <p>&copy; 2024 Your Company</p>
+      </footer>
+    </div>
+  );
+}
+```
+
+## ARIA Labels and Roles
+- Use ARIA labels for complex interactions
+- Implement proper ARIA roles
+- Use aria-describedby for additional context
+- Ensure proper ARIA relationships
+
+```typescript
+// Good: ARIA implementation
+function Modal({ isOpen, onClose, children }: ModalProps) {
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="modal-title"
+      aria-describedby="modal-description"
+      className={isOpen ? 'block' : 'hidden'}
+    >
+      <div className="modal-content">
+        <h2 id="modal-title">Modal Title</h2>
+        <p id="modal-description">Modal description</p>
+        {children}
+        <button
+          onClick={onClose}
+          aria-label="Close modal"
+          className="close-button"
+        >
+          ×
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// Good: Form with proper ARIA
+function AccessibleForm() {
+  return (
+    <form>
+      <div>
+        <label htmlFor="email">Email Address</label>
+        <input
+          id="email"
+          type="email"
+          required
+          aria-describedby="email-error"
+          aria-invalid={hasError}
+        />
+        {hasError && (
+          <div id="email-error" role="alert">
+            Please enter a valid email address
+          </div>
+        )}
+      </div>
+    </form>
+  );
+}
+```
+
+## Keyboard Navigation
+- Ensure all interactive elements are keyboard accessible
+- Implement proper tab order
+- Use focus management for modals and dropdowns
+- Provide visible focus indicators
+
+```typescript
+// Good: Keyboard navigation
+function Dropdown({ options, onSelect }: DropdownProps) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [focusedIndex, setFocusedIndex] = useState(-1);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const listRef = useRef<HTMLUListElement>(null);
+
+  const handleKeyDown = (e: KeyboardEvent) => {
+    switch (e.key) {
+      case 'ArrowDown':
+        e.preventDefault();
+        setFocusedIndex(prev => 
+          prev < options.length - 1 ? prev + 1 : 0
+        );
+        break;
+      case 'ArrowUp':
+        e.preventDefault();
+        setFocusedIndex(prev => 
+          prev > 0 ? prev - 1 : options.length - 1
+        );
+        break;
+      case 'Enter':
+      case ' ':
+        e.preventDefault();
+        if (focusedIndex >= 0) {
+          onSelect(options[focusedIndex]);
+          setIsOpen(false);
+        }
+        break;
+      case 'Escape':
+        setIsOpen(false);
+        buttonRef.current?.focus();
+        break;
+    }
+  };
+
+  return (
+    <div className="dropdown">
+      <button
+        ref={buttonRef}
+        onClick={() => setIsOpen(!isOpen)}
+        aria-expanded={isOpen}
+        aria-haspopup="listbox"
+        aria-label="Select option"
+      >
+        Select Option
+      </button>
+      
+      {isOpen && (
+        <ul
+          ref={listRef}
+          role="listbox"
+          onKeyDown={handleKeyDown}
+          className="dropdown-list"
+        >
+          {options.map((option, index) => (
+            <li
+              key={option.value}
+              role="option"
+              aria-selected={focusedIndex === index}
+              className={focusedIndex === index ? 'focused' : ''}
+              onClick={() => onSelect(option)}
+            >
+              {option.label}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+```
+
+## Color and Contrast
+- Ensure sufficient color contrast (WCAG AA: 4.5:1, AAA: 7:1)
+- Don't rely solely on color to convey information
+- Provide alternative ways to distinguish elements
+- Test with color blindness simulators
+
+```typescript
+// Good: Color contrast and alternatives
+function StatusIndicator({ status }: { status: 'success' | 'error' | 'warning' }) {
+  const statusConfig = {
+    success: {
+      color: 'text-green-600',
+      bgColor: 'bg-green-100',
+      icon: '✓',
+      text: 'Success'
+    },
+    error: {
+      color: 'text-red-600',
+      bgColor: 'bg-red-100',
+      icon: '✗',
+      text: 'Error'
+    },
+    warning: {
+      color: 'text-yellow-600',
+      bgColor: 'bg-yellow-100',
+      icon: '⚠',
+      text: 'Warning'
+    }
+  };
+
+  const config = statusConfig[status];
+
+  return (
+    <div className={`flex items-center gap-2 ${config.bgColor} p-2 rounded`}>
+      <span className={`text-lg ${config.color}`} aria-hidden="true">
+        {config.icon}
+      </span>
+      <span className={`font-medium ${config.color}`}>
+        {config.text}
+      </span>
+    </div>
+  );
+}
+```
+
+## Screen Reader Support
+- Provide meaningful alt text for images
+- Use proper heading structure
+- Implement skip links
+- Ensure content is announced correctly
+
+```typescript
+// Good: Screen reader support
+function ImageWithAlt({ src, alt, decorative = false }: ImageProps) {
+  return (
+    <img
+      src={src}
+      alt={decorative ? '' : alt}
+      role={decorative ? 'presentation' : undefined}
+    />
+  );
+}
+
+// Good: Skip links
+function SkipLinks() {
+  return (
+    <div className="skip-links">
+      <a href="#main-content" className="sr-only focus:not-sr-only">
+        Skip to main content
+      </a>
+      <a href="#navigation" className="sr-only focus:not-sr-only">
+        Skip to navigation
+      </a>
+    </div>
+  );
+}
+
+// Good: Screen reader announcements
+function useScreenReaderAnnouncement() {
+  const [announcement, setAnnouncement] = useState('');
+
+  const announce = (message: string) => {
+    setAnnouncement(message);
+    // Clear after announcement
+    setTimeout(() => setAnnouncement(''), 1000);
+  };
+
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      aria-atomic="true"
+      className="sr-only"
+    >
+      {announcement}
+    </div>
+  );
+}
+```
+
+## Form Accessibility
+- Use proper labels and descriptions
+- Implement error handling and announcements
+- Provide clear instructions
+- Use appropriate input types
+
+```typescript
+// Good: Accessible form
+function AccessibleForm() {
+  const [errors, setErrors] = useState<Record<string, string>>({});
+
+  return (
+    <form>
+      <fieldset>
+        <legend>Personal Information</legend>
+        
+        <div>
+          <label htmlFor="firstName">First Name *</label>
+          <input
+            id="firstName"
+            type="text"
+            required
+            aria-describedby="firstName-help"
+            aria-invalid={!!errors.firstName}
+            aria-errormessage={errors.firstName ? 'firstName-error' : undefined}
+          />
+          <div id="firstName-help" className="help-text">
+            Enter your legal first name
+          </div>
+          {errors.firstName && (
+            <div id="firstName-error" role="alert" className="error-text">
+              {errors.firstName}
+            </div>
+          )}
+        </div>
+
+        <div>
+          <label htmlFor="email">Email Address *</label>
+          <input
+            id="email"
+            type="email"
+            required
+            aria-describedby="email-help"
+            aria-invalid={!!errors.email}
+            aria-errormessage={errors.email ? 'email-error' : undefined}
+          />
+          <div id="email-help" className="help-text">
+            We'll never share your email
+          </div>
+          {errors.email && (
+            <div id="email-error" role="alert" className="error-text">
+              {errors.email}
+            </div>
+          )}
+        </div>
+      </fieldset>
+    </form>
+  );
+}
+```
+
+## Testing Accessibility
+- Use automated accessibility testing tools
+- Test with screen readers
+- Perform keyboard-only navigation testing
+- Use axe-core for automated testing
+
+```typescript
+// Good: Accessibility testing setup
+import { axe, toHaveNoViolations } from 'jest-axe';
+
+expect.extend(toHaveNoViolations);
+
+describe('Accessibility Tests', () => {
+  it('should not have accessibility violations', async () => {
+    const { container } = render(<MyComponent />);
+    const results = await axe(container);
+    expect(results).toHaveNoViolations();
+  });
+
+  it('should be navigable with keyboard', async () => {
+    render(<MyComponent />);
+    
+    const firstButton = screen.getByRole('button', { name: /first/i });
+    firstButton.focus();
+    expect(firstButton).toHaveFocus();
+    
+    await user.tab();
+    const secondButton = screen.getByRole('button', { name: /second/i });
+    expect(secondButton).toHaveFocus();
+  });
+});
+```
+
+## Focus Management
+- Implement proper focus management for modals
+- Use focus traps for overlays
+- Restore focus after interactions
+- Provide visible focus indicators
+
+```typescript
+// Good: Focus management hook
+function useFocusManagement() {
+  const [previousActiveElement, setPreviousActiveElement] = useState<HTMLElement | null>(null);
+
+  const trapFocus = (containerRef: RefObject<HTMLElement>) => {
+    const focusableElements = containerRef.current?.querySelectorAll(
+      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+    );
+    
+    if (!focusableElements?.length) return;
+
+    const firstElement = focusableElements[0] as HTMLElement;
+    const lastElement = focusableElements[focusableElements.length - 1] as HTMLElement;
+
+    const handleTabKey = (e: KeyboardEvent) => {
+      if (e.key === 'Tab') {
+        if (e.shiftKey) {
+          if (document.activeElement === firstElement) {
+            lastElement.focus();
+            e.preventDefault();
+          }
+        } else {
+          if (document.activeElement === lastElement) {
+            firstElement.focus();
+            e.preventDefault();
+          }
+        }
+      }
+    };
+
+    document.addEventListener('keydown', handleTabKey);
+    return () => document.removeEventListener('keydown', handleTabKey);
+  };
+
+  const saveFocus = () => {
+    setPreviousActiveElement(document.activeElement as HTMLElement);
+  };
+
+  const restoreFocus = () => {
+    if (previousActiveElement) {
+      previousActiveElement.focus();
+    }
+  };
+
+  return { trapFocus, saveFocus, restoreFocus };
+}
+```

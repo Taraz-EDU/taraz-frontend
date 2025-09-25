@@ -1,0 +1,504 @@
+---
+description: State management patterns with Zustand, React Query, and Context
+globs: ["**/*.ts", "**/*.tsx", "stores/**/*", "hooks/**/*", "context/**/*"]
+alwaysApply: true
+---
+
+# State Management Rules
+
+## State Management Strategy
+- Use local state for component-specific data
+- Use server state management (React Query) for API data
+- Use global state management (Zustand) for app-wide state
+- Use React Context for theme, auth, and configuration
+
+## Zustand Store Patterns
+- Create focused, single-responsibility stores
+- Use TypeScript for type safety
+- Implement proper state updates
+- Use devtools for debugging
+
+```typescript
+// Good: Zustand store with TypeScript
+import { create } from 'zustand';
+import { devtools, persist } from 'zustand/middleware';
+
+interface User {
+  id: string;
+  name: string;
+  email: string;
+  avatar?: string;
+}
+
+interface AuthState {
+  user: User | null;
+  isAuthenticated: boolean;
+  isLoading: boolean;
+  login: (credentials: LoginCredentials) => Promise<void>;
+  logout: () => void;
+  updateUser: (user: Partial<User>) => void;
+}
+
+export const useAuthStore = create<AuthState>()(
+  devtools(
+    persist(
+      (set, get) => ({
+        user: null,
+        isAuthenticated: false,
+        isLoading: false,
+
+        login: async (credentials) => {
+          set({ isLoading: true });
+          try {
+            const user = await loginUser(credentials);
+            set({ 
+              user, 
+              isAuthenticated: true, 
+              isLoading: false 
+            });
+          } catch (error) {
+            set({ isLoading: false });
+            throw error;
+          }
+        },
+
+        logout: () => {
+          set({ 
+            user: null, 
+            isAuthenticated: false 
+          });
+        },
+
+        updateUser: (userData) => {
+          const currentUser = get().user;
+          if (currentUser) {
+            set({ 
+              user: { ...currentUser, ...userData } 
+            });
+          }
+        },
+      }),
+      {
+        name: 'auth-storage',
+        partialize: (state) => ({ 
+          user: state.user, 
+          isAuthenticated: state.isAuthenticated 
+        }),
+      }
+    ),
+    { name: 'auth-store' }
+  )
+);
+
+// Good: Computed values and selectors
+export const useAuth = () => {
+  const { user, isAuthenticated, isLoading } = useAuthStore();
+  
+  return {
+    user,
+    isAuthenticated,
+    isLoading,
+    isAdmin: user?.role === 'admin',
+    isUser: user?.role === 'user',
+  };
+};
+```
+
+## React Query for Server State
+- Use React Query for all server state
+- Implement proper caching strategies
+- Use optimistic updates
+- Handle loading and error states
+
+```typescript
+// Good: React Query setup
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
+
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 5 * 60 * 1000, // 5 minutes
+      cacheTime: 10 * 60 * 1000, // 10 minutes
+      retry: (failureCount, error) => {
+        if (error.status === 404) return false;
+        return failureCount < 3;
+      },
+    },
+    mutations: {
+      retry: false,
+    },
+  },
+});
+
+// Good: Custom hooks for API calls
+export function useUsers() {
+  return useQuery({
+    queryKey: ['users'],
+    queryFn: fetchUsers,
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
+export function useUser(id: string) {
+  return useQuery({
+    queryKey: ['users', id],
+    queryFn: () => fetchUser(id),
+    enabled: !!id,
+  });
+}
+
+export function useCreateUser() {
+  const queryClient = useQueryClient();
+  
+  return useMutation({
+    mutationFn: createUser,
+    onSuccess: (newUser) => {
+      // Invalidate and refetch users list
+      queryClient.invalidateQueries({ queryKey: ['users'] });
+      
+      // Add new user to cache
+      queryClient.setQueryData(['users', newUser.id], newUser);
+    },
+    onError: (error) => {
+      console.error('Failed to create user:', error);
+    },
+  });
+}
+
+// Good: Optimistic updates
+export function useUpdateUser() {
+  const queryClient = useQueryClient();
+  
+  return useMutation({
+    mutationFn: updateUser,
+    onMutate: async (updatedUser) => {
+      // Cancel outgoing refetches
+      await queryClient.cancelQueries({ queryKey: ['users', updatedUser.id] });
+      
+      // Snapshot previous value
+      const previousUser = queryClient.getQueryData(['users', updatedUser.id]);
+      
+      // Optimistically update
+      queryClient.setQueryData(['users', updatedUser.id], updatedUser);
+      
+      return { previousUser };
+    },
+    onError: (err, updatedUser, context) => {
+      // Rollback on error
+      queryClient.setQueryData(['users', updatedUser.id], context?.previousUser);
+    },
+    onSettled: (data, error, updatedUser) => {
+      // Always refetch after error or success
+      queryClient.invalidateQueries({ queryKey: ['users', updatedUser.id] });
+    },
+  });
+}
+```
+
+## Context for App Configuration
+- Use Context for theme, language, and app settings
+- Implement proper context providers
+- Use custom hooks for context consumption
+- Avoid prop drilling
+
+```typescript
+// Good: Theme context
+interface ThemeContextType {
+  theme: 'light' | 'dark';
+  toggleTheme: () => void;
+  setTheme: (theme: 'light' | 'dark') => void;
+}
+
+const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
+
+export function ThemeProvider({ children }: { children: React.ReactNode }) {
+  const [theme, setTheme] = useState<'light' | 'dark'>('light');
+  
+  const toggleTheme = useCallback(() => {
+    setTheme(prev => prev === 'light' ? 'dark' : 'light');
+  }, []);
+  
+  const handleSetTheme = useCallback((newTheme: 'light' | 'dark') => {
+    setTheme(newTheme);
+  }, []);
+
+  useEffect(() => {
+    // Apply theme to document
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem('theme', theme);
+  }, [theme]);
+
+  return (
+    <ThemeContext.Provider value={{ 
+      theme, 
+      toggleTheme, 
+      setTheme: handleSetTheme 
+    }}>
+      {children}
+    </ThemeContext.Provider>
+  );
+}
+
+export function useTheme() {
+  const context = useContext(ThemeContext);
+  if (context === undefined) {
+    throw new Error('useTheme must be used within a ThemeProvider');
+  }
+  return context;
+}
+
+// Good: Language context
+interface LanguageContextType {
+  language: string;
+  setLanguage: (lang: string) => void;
+  t: (key: string) => string;
+}
+
+const LanguageContext = createContext<LanguageContextType | undefined>(undefined);
+
+export function LanguageProvider({ children }: { children: React.ReactNode }) {
+  const [language, setLanguage] = useState('en');
+  const [translations, setTranslations] = useState<Record<string, any>>({});
+
+  const t = useCallback((key: string) => {
+    return translations[key] || key;
+  }, [translations]);
+
+  useEffect(() => {
+    // Load translations
+    import(`../locales/${language}.json`)
+      .then(module => setTranslations(module.default))
+      .catch(() => setTranslations({}));
+  }, [language]);
+
+  return (
+    <LanguageContext.Provider value={{ language, setLanguage, t }}>
+      {children}
+    </LanguageContext.Provider>
+  );
+}
+```
+
+## Local State Management
+- Use useState for simple local state
+- Use useReducer for complex state logic
+- Implement proper state updates
+- Use custom hooks for reusable state logic
+
+```typescript
+// Good: useReducer for complex state
+interface FormState {
+  values: Record<string, any>;
+  errors: Record<string, string>;
+  touched: Record<string, boolean>;
+  isSubmitting: boolean;
+}
+
+type FormAction = 
+  | { type: 'SET_VALUE'; field: string; value: any }
+  | { type: 'SET_ERROR'; field: string; error: string }
+  | { type: 'SET_TOUCHED'; field: string }
+  | { type: 'SET_SUBMITTING'; isSubmitting: boolean }
+  | { type: 'RESET' };
+
+function formReducer(state: FormState, action: FormAction): FormState {
+  switch (action.type) {
+    case 'SET_VALUE':
+      return {
+        ...state,
+        values: { ...state.values, [action.field]: action.value },
+        errors: { ...state.errors, [action.field]: '' }
+      };
+    case 'SET_ERROR':
+      return {
+        ...state,
+        errors: { ...state.errors, [action.field]: action.error }
+      };
+    case 'SET_TOUCHED':
+      return {
+        ...state,
+        touched: { ...state.touched, [action.field]: true }
+      };
+    case 'SET_SUBMITTING':
+      return { ...state, isSubmitting: action.isSubmitting };
+    case 'RESET':
+      return {
+        values: {},
+        errors: {},
+        touched: {},
+        isSubmitting: false
+      };
+    default:
+      return state;
+  }
+}
+
+// Good: Custom hook for form state
+function useFormState(initialValues: Record<string, any> = {}) {
+  const [state, dispatch] = useReducer(formReducer, {
+    values: initialValues,
+    errors: {},
+    touched: {},
+    isSubmitting: false
+  });
+
+  const setValue = useCallback((field: string, value: any) => {
+    dispatch({ type: 'SET_VALUE', field, value });
+  }, []);
+
+  const setError = useCallback((field: string, error: string) => {
+    dispatch({ type: 'SET_ERROR', field, error });
+  }, []);
+
+  const setTouched = useCallback((field: string) => {
+    dispatch({ type: 'SET_TOUCHED', field });
+  }, []);
+
+  const reset = useCallback(() => {
+    dispatch({ type: 'RESET' });
+  }, []);
+
+  return {
+    ...state,
+    setValue,
+    setError,
+    setTouched,
+    reset
+  };
+}
+```
+
+## State Persistence
+- Implement proper state persistence
+- Use localStorage for client-side persistence
+- Implement state hydration
+- Handle persistence errors gracefully
+
+```typescript
+// Good: State persistence hook
+function usePersistedState<T>(
+  key: string,
+  defaultValue: T,
+  options: {
+    serialize?: (value: T) => string;
+    deserialize?: (value: string) => T;
+  } = {}
+) {
+  const {
+    serialize = JSON.stringify,
+    deserialize = JSON.parse
+  } = options;
+
+  const [state, setState] = useState<T>(() => {
+    if (typeof window === 'undefined') {
+      return defaultValue;
+    }
+
+    try {
+      const item = window.localStorage.getItem(key);
+      return item ? deserialize(item) : defaultValue;
+    } catch (error) {
+      console.error(`Error reading localStorage key "${key}":`, error);
+      return defaultValue;
+    }
+  });
+
+  const setPersistedState = useCallback((value: T | ((prev: T) => T)) => {
+    try {
+      const newValue = value instanceof Function ? value(state) : value;
+      setState(newValue);
+      
+      if (typeof window !== 'undefined') {
+        window.localStorage.setItem(key, serialize(newValue));
+      }
+    } catch (error) {
+      console.error(`Error setting localStorage key "${key}":`, error);
+    }
+  }, [key, serialize, state]);
+
+  return [state, setPersistedState] as const;
+}
+
+// Good: Zustand with persistence
+export const useSettingsStore = create<SettingsState>()(
+  persist(
+    (set) => ({
+      theme: 'light',
+      language: 'en',
+      notifications: true,
+      setTheme: (theme) => set({ theme }),
+      setLanguage: (language) => set({ language }),
+      setNotifications: (notifications) => set({ notifications }),
+    }),
+    {
+      name: 'settings-storage',
+      storage: createJSONStorage(() => localStorage),
+      onRehydrateStorage: () => (state, error) => {
+        if (error) {
+          console.error('Failed to rehydrate settings:', error);
+        }
+      },
+    }
+  )
+);
+```
+
+## State Synchronization
+- Implement proper state synchronization
+- Use event-driven updates
+- Handle concurrent updates
+- Implement conflict resolution
+
+```typescript
+// Good: State synchronization with events
+class StateSync {
+  private listeners = new Map<string, Set<Function>>();
+
+  subscribe(event: string, callback: Function) {
+    if (!this.listeners.has(event)) {
+      this.listeners.set(event, new Set());
+    }
+    this.listeners.get(event)!.add(callback);
+
+    return () => {
+      this.listeners.get(event)?.delete(callback);
+    };
+  }
+
+  emit(event: string, data: any) {
+    this.listeners.get(event)?.forEach(callback => {
+      try {
+        callback(data);
+      } catch (error) {
+        console.error('Error in state sync listener:', error);
+      }
+    });
+  }
+}
+
+const stateSync = new StateSync();
+
+// Good: Synchronized state hook
+function useSynchronizedState<T>(
+  key: string,
+  defaultValue: T
+) {
+  const [state, setState] = useState<T>(defaultValue);
+
+  useEffect(() => {
+    const unsubscribe = stateSync.subscribe(`state:${key}`, (newValue: T) => {
+      setState(newValue);
+    });
+
+    return unsubscribe;
+  }, [key]);
+
+  const updateState = useCallback((newValue: T) => {
+    setState(newValue);
+    stateSync.emit(`state:${key}`, newValue);
+  }, [key]);
+
+  return [state, updateState] as const;
+}
+```

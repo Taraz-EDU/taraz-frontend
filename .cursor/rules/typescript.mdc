@@ -1,0 +1,97 @@
+---
+description: TypeScript best practices and type safety rules
+globs: ["**/*.ts", "**/*.tsx"]
+alwaysApply: true
+---
+
+# TypeScript Rules
+
+## Type Safety
+- Always use strict TypeScript configuration
+- Prefer explicit types over `any` - use `unknown` when type is truly unknown
+- Use type assertions sparingly and prefer type guards
+- Define interfaces for all data structures, especially API responses
+- Use generic types for reusable components and functions
+- Prefer `const assertions` for immutable data
+
+## Type Definitions
+```typescript
+// Good: Explicit interface
+interface User {
+  id: string;
+  name: string;
+  email: string;
+  createdAt: Date;
+}
+
+// Good: Generic component
+interface ButtonProps<T = string> {
+  value: T;
+  onClick: (value: T) => void;
+}
+
+// Good: Type guard
+function isUser(obj: unknown): obj is User {
+  return typeof obj === 'object' && obj !== null && 'id' in obj;
+}
+```
+
+## Import/Export Patterns
+- Use named exports for utilities and components
+- Use default exports only for page components and main module exports
+- Group imports: external libraries, internal modules, relative imports
+- Use type-only imports when importing only types
+
+```typescript
+// Good import order
+import React from 'react';
+import { NextPage } from 'next';
+import { Button } from '@/components/ui/Button';
+import type { User } from '@/types/user';
+```
+
+## Error Handling
+- Use Result/Either patterns for error handling
+- Create custom error classes with proper typing
+- Use discriminated unions for different error states
+
+```typescript
+// Good: Result pattern
+type Result<T, E = Error> = 
+  | { success: true; data: T }
+  | { success: false; error: E };
+
+// Good: Discriminated union
+type LoadingState = 
+  | { status: 'idle' }
+  | { status: 'loading' }
+  | { status: 'success'; data: User[] }
+  | { status: 'error'; error: string };
+```
+
+## Utility Types
+- Use built-in utility types: `Partial<T>`, `Pick<T, K>`, `Omit<T, K>`, `Record<K, V>`
+- Create custom utility types for common patterns
+- Use template literal types for string manipulation
+
+```typescript
+// Good: Custom utility types
+type Optional<T, K extends keyof T> = Omit<T, K> & Partial<Pick<T, K>>;
+type ApiResponse<T> = {
+  data: T;
+  message: string;
+  status: 'success' | 'error';
+};
+```
+
+## Performance Considerations
+- Use `React.memo` with proper dependency arrays
+- Prefer `useCallback` and `useMemo` for expensive computations
+- Use `React.lazy` for code splitting
+- Avoid creating objects/functions in render
+
+## Code Organization
+- Keep components under 200 lines
+- Extract custom hooks for complex logic
+- Use barrel exports for clean imports
+- Separate business logic from UI components

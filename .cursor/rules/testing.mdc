@@ -1,0 +1,423 @@
+---
+description: Testing patterns with Jest, React Testing Library, and Playwright
+globs: ["**/*.test.ts", "**/*.test.tsx", "**/*.spec.ts", "**/*.spec.tsx", "__tests__/**/*", "tests/**/*"]
+alwaysApply: true
+---
+
+# Testing Rules
+
+## Testing Philosophy
+- Write tests that test behavior, not implementation
+- Focus on user interactions and outcomes
+- Use the Testing Library philosophy: "The more your tests resemble the way your software is used, the more confidence they can give you"
+- Aim for high confidence with minimal test maintenance
+
+## Test Structure and Organization
+- Use descriptive test names that explain the scenario
+- Follow the AAA pattern: Arrange, Act, Assert
+- Group related tests with `describe` blocks
+- Keep tests focused and independent
+
+```typescript
+// Good: Well-structured test
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { UserForm } from './UserForm';
+
+describe('UserForm', () => {
+  describe('when submitting valid data', () => {
+    it('should call onSubmit with form data', async () => {
+      // Arrange
+      const mockOnSubmit = jest.fn();
+      render(<UserForm onSubmit={mockOnSubmit} />);
+      
+      const nameInput = screen.getByLabelText(/name/i);
+      const emailInput = screen.getByLabelText(/email/i);
+      const submitButton = screen.getByRole('button', { name: /submit/i });
+      
+      // Act
+      fireEvent.change(nameInput, { target: { value: 'John Doe' } });
+      fireEvent.change(emailInput, { target: { value: 'john@example.com' } });
+      fireEvent.click(submitButton);
+      
+      // Assert
+      await waitFor(() => {
+        expect(mockOnSubmit).toHaveBeenCalledWith({
+          name: 'John Doe',
+          email: 'john@example.com'
+        });
+      });
+    });
+  });
+  
+  describe('when submitting invalid data', () => {
+    it('should display validation errors', async () => {
+      // Arrange
+      const mockOnSubmit = jest.fn();
+      render(<UserForm onSubmit={mockOnSubmit} />);
+      
+      const submitButton = screen.getByRole('button', { name: /submit/i });
+      
+      // Act
+      fireEvent.click(submitButton);
+      
+      // Assert
+      expect(await screen.findByText(/name is required/i)).toBeInTheDocument();
+      expect(await screen.findByText(/email is required/i)).toBeInTheDocument();
+      expect(mockOnSubmit).not.toHaveBeenCalled();
+    });
+  });
+});
+```
+
+## React Testing Library Best Practices
+- Use semantic queries (getByRole, getByLabelText, getByText)
+- Prefer user-facing queries over implementation details
+- Use `screen` object for all queries
+- Test accessibility features
+
+```typescript
+// Good: Using semantic queries
+import { render, screen } from '@testing-library/react';
+import { Button } from './Button';
+
+describe('Button', () => {
+  it('should be accessible', () => {
+    render(<Button>Click me</Button>);
+    
+    const button = screen.getByRole('button', { name: /click me/i });
+    expect(button).toBeInTheDocument();
+    expect(button).not.toBeDisabled();
+  });
+  
+  it('should handle click events', () => {
+    const handleClick = jest.fn();
+    render(<Button onClick={handleClick}>Click me</Button>);
+    
+    const button = screen.getByRole('button');
+    fireEvent.click(button);
+    
+    expect(handleClick).toHaveBeenCalledTimes(1);
+  });
+});
+
+// Good: Testing form interactions
+describe('LoginForm', () => {
+  it('should allow user to login with valid credentials', async () => {
+    const mockLogin = jest.fn().mockResolvedValue({ success: true });
+    render(<LoginForm onLogin={mockLogin} />);
+    
+    const emailInput = screen.getByLabelText(/email/i);
+    const passwordInput = screen.getByLabelText(/password/i);
+    const submitButton = screen.getByRole('button', { name: /login/i });
+    
+    await user.type(emailInput, 'user@example.com');
+    await user.type(passwordInput, 'password123');
+    await user.click(submitButton);
+    
+    await waitFor(() => {
+      expect(mockLogin).toHaveBeenCalledWith({
+        email: 'user@example.com',
+        password: 'password123'
+      });
+    });
+  });
+});
+```
+
+## Custom Hooks Testing
+- Test hooks using `@testing-library/react-hooks`
+- Test all hook states and transitions
+- Mock external dependencies
+
+```typescript
+// Good: Testing custom hook
+import { renderHook, act } from '@testing-library/react';
+import { useCounter } from './useCounter';
+
+describe('useCounter', () => {
+  it('should initialize with default value', () => {
+    const { result } = renderHook(() => useCounter());
+    
+    expect(result.current.count).toBe(0);
+  });
+  
+  it('should increment count', () => {
+    const { result } = renderHook(() => useCounter(5));
+    
+    act(() => {
+      result.current.increment();
+    });
+    
+    expect(result.current.count).toBe(6);
+  });
+  
+  it('should decrement count', () => {
+    const { result } = renderHook(() => useCounter(5));
+    
+    act(() => {
+      result.current.decrement();
+    });
+    
+    expect(result.current.count).toBe(4);
+  });
+  
+  it('should reset count', () => {
+    const { result } = renderHook(() => useCounter(5));
+    
+    act(() => {
+      result.current.increment();
+      result.current.reset();
+    });
+    
+    expect(result.current.count).toBe(5);
+  });
+});
+```
+
+## API and Integration Testing
+- Mock external API calls
+- Test error handling scenarios
+- Use MSW (Mock Service Worker) for realistic API mocking
+
+```typescript
+// Good: API testing with MSW
+import { rest } from 'msw';
+import { setupServer } from 'msw/node';
+import { render, screen, waitFor } from '@testing-library/react';
+import { UserList } from './UserList';
+
+const server = setupServer(
+  rest.get('/api/users', (req, res, ctx) => {
+    return res(
+      ctx.json([
+        { id: '1', name: 'John Doe', email: 'john@example.com' },
+        { id: '2', name: 'Jane Smith', email: 'jane@example.com' }
+      ])
+    );
+  }),
+  rest.get('/api/users', (req, res, ctx) => {
+    return res(
+      ctx.status(500),
+      ctx.json({ error: 'Internal Server Error' })
+    );
+  })
+);
+
+beforeAll(() => server.listen());
+afterEach(() => server.resetHandlers());
+afterAll(() => server.close());
+
+describe('UserList', () => {
+  it('should display users when API call succeeds', async () => {
+    render(<UserList />);
+    
+    expect(await screen.findByText('John Doe')).toBeInTheDocument();
+    expect(await screen.findByText('Jane Smith')).toBeInTheDocument();
+  });
+  
+  it('should display error message when API call fails', async () => {
+    server.use(
+      rest.get('/api/users', (req, res, ctx) => {
+        return res(ctx.status(500), ctx.json({ error: 'Server Error' }));
+      })
+    );
+    
+    render(<UserList />);
+    
+    expect(await screen.findByText(/error loading users/i)).toBeInTheDocument();
+  });
+});
+```
+
+## Component Integration Testing
+- Test complete user workflows
+- Test component interactions
+- Use realistic test data
+
+```typescript
+// Good: Integration test
+describe('User Management Workflow', () => {
+  it('should allow user to create, edit, and delete a user', async () => {
+    render(<UserManagement />);
+    
+    // Create user
+    const addButton = screen.getByRole('button', { name: /add user/i });
+    await user.click(addButton);
+    
+    const nameInput = screen.getByLabelText(/name/i);
+    const emailInput = screen.getByLabelText(/email/i);
+    const saveButton = screen.getByRole('button', { name: /save/i });
+    
+    await user.type(nameInput, 'New User');
+    await user.type(emailInput, 'newuser@example.com');
+    await user.click(saveButton);
+    
+    expect(await screen.findByText('New User')).toBeInTheDocument();
+    
+    // Edit user
+    const editButton = screen.getByRole('button', { name: /edit/i });
+    await user.click(editButton);
+    
+    const updatedNameInput = screen.getByDisplayValue('New User');
+    await user.clear(updatedNameInput);
+    await user.type(updatedNameInput, 'Updated User');
+    
+    const updateButton = screen.getByRole('button', { name: /update/i });
+    await user.click(updateButton);
+    
+    expect(await screen.findByText('Updated User')).toBeInTheDocument();
+    
+    // Delete user
+    const deleteButton = screen.getByRole('button', { name: /delete/i });
+    await user.click(deleteButton);
+    
+    const confirmButton = screen.getByRole('button', { name: /confirm/i });
+    await user.click(confirmButton);
+    
+    await waitFor(() => {
+      expect(screen.queryByText('Updated User')).not.toBeInTheDocument();
+    });
+  });
+});
+```
+
+## Performance Testing
+- Test component rendering performance
+- Test memory leaks
+- Use React DevTools Profiler in tests
+
+```typescript
+// Good: Performance test
+import { render } from '@testing-library/react';
+import { Profiler } from 'react';
+import { ExpensiveComponent } from './ExpensiveComponent';
+
+describe('ExpensiveComponent Performance', () => {
+  it('should render within acceptable time', () => {
+    const onRender = jest.fn();
+    
+    render(
+      <Profiler id="ExpensiveComponent" onRender={onRender}>
+        <ExpensiveComponent data={largeDataSet} />
+      </Profiler>
+    );
+    
+    const renderTime = onRender.mock.calls[0][1];
+    expect(renderTime).toBeLessThan(100); // 100ms threshold
+  });
+});
+```
+
+## Accessibility Testing
+- Test keyboard navigation
+- Test screen reader compatibility
+- Use jest-axe for automated accessibility testing
+
+```typescript
+// Good: Accessibility testing
+import { render } from '@testing-library/react';
+import { axe, toHaveNoViolations } from 'jest-axe';
+import { AccessibleForm } from './AccessibleForm';
+
+expect.extend(toHaveNoViolations);
+
+describe('AccessibleForm', () => {
+  it('should not have accessibility violations', async () => {
+    const { container } = render(<AccessibleForm />);
+    const results = await axe(container);
+    expect(results).toHaveNoViolations();
+  });
+  
+  it('should be navigable with keyboard', async () => {
+    render(<AccessibleForm />);
+    
+    const firstInput = screen.getByLabelText(/first name/i);
+    firstInput.focus();
+    
+    expect(firstInput).toHaveFocus();
+    
+    // Test tab navigation
+    await user.tab();
+    const secondInput = screen.getByLabelText(/last name/i);
+    expect(secondInput).toHaveFocus();
+  });
+});
+```
+
+## Test Utilities and Helpers
+- Create reusable test utilities
+- Mock common dependencies
+- Use custom render functions
+
+```typescript
+// Good: Custom render function
+import { render, RenderOptions } from '@testing-library/react';
+import { ThemeProvider } from './ThemeProvider';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+
+interface CustomRenderOptions extends Omit<RenderOptions, 'wrapper'> {
+  theme?: 'light' | 'dark';
+  queryClient?: QueryClient;
+}
+
+export function renderWithProviders(
+  ui: React.ReactElement,
+  { theme = 'light', queryClient = new QueryClient(), ...renderOptions }: CustomRenderOptions = {}
+) {
+  function Wrapper({ children }: { children: React.ReactNode }) {
+    return (
+      <QueryClientProvider client={queryClient}>
+        <ThemeProvider theme={theme}>
+          {children}
+        </ThemeProvider>
+      </QueryClientProvider>
+    );
+  }
+  
+  return render(ui, { wrapper: Wrapper, ...renderOptions });
+}
+
+// Good: Test utilities
+export const createMockUser = (overrides: Partial<User> = {}): User => ({
+  id: '1',
+  name: 'Test User',
+  email: 'test@example.com',
+  ...overrides
+});
+
+export const createMockApiResponse = <T>(data: T) => ({
+  data,
+  status: 'success',
+  message: 'OK'
+});
+```
+
+## Test Configuration
+- Use proper Jest configuration
+- Set up test environment
+- Configure coverage thresholds
+
+```javascript
+// jest.config.js
+module.exports = {
+  testEnvironment: 'jsdom',
+  setupFilesAfterEnv: ['<rootDir>/jest.setup.js'],
+  moduleNameMapping: {
+    '^@/(.*)$': '<rootDir>/$1',
+  },
+  collectCoverageFrom: [
+    '**/*.{ts,tsx}',
+    '!**/*.d.ts',
+    '!**/node_modules/**',
+    '!**/.next/**',
+  ],
+  coverageThreshold: {
+    global: {
+      branches: 80,
+      functions: 80,
+      lines: 80,
+      statements: 80,
+    },
+  },
+};
+```

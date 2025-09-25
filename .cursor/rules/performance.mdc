@@ -1,0 +1,450 @@
+---
+description: Performance optimization patterns for Next.js and React applications
+globs: ["**/*.tsx", "**/*.ts", "app/**/*", "components/**/*"]
+alwaysApply: true
+---
+
+# Performance Rules
+
+## Next.js Performance Optimization
+- Use App Router for better performance
+- Implement proper caching strategies
+- Optimize images with `next/image`
+- Use dynamic imports for code splitting
+- Implement proper loading states
+
+```typescript
+// Good: Dynamic imports for code splitting
+import dynamic from 'next/dynamic';
+import { Suspense } from 'react';
+
+const HeavyComponent = dynamic(() => import('./HeavyComponent'), {
+  loading: () => <div>Loading...</div>,
+  ssr: false // Disable SSR if component uses browser APIs
+});
+
+const LazyModal = dynamic(() => import('./Modal'), {
+  loading: () => <div>Loading modal...</div>
+});
+
+// Good: Image optimization
+import Image from 'next/image';
+
+function OptimizedImage({ src, alt, priority = false }: ImageProps) {
+  return (
+    <Image
+      src={src}
+      alt={alt}
+      width={800}
+      height={600}
+      priority={priority}
+      placeholder="blur"
+      blurDataURL="data:image/jpeg;base64,..."
+      sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
+    />
+  );
+}
+```
+
+## React Performance Patterns
+- Use `React.memo` for expensive components
+- Implement proper `useCallback` and `useMemo` usage
+- Avoid creating objects/functions in render
+- Use `React.lazy` for route-based code splitting
+
+```typescript
+// Good: Memoized component with proper dependencies
+interface ExpensiveComponentProps {
+  data: ComplexData[];
+  onUpdate: (id: string) => void;
+  filter: string;
+}
+
+const ExpensiveComponent = React.memo(function ExpensiveComponent({ 
+  data, 
+  onUpdate, 
+  filter 
+}: ExpensiveComponentProps) {
+  // Memoize expensive calculations
+  const processedData = useMemo(() => {
+    return data
+      .filter(item => item.name.includes(filter))
+      .map(item => ({
+        ...item,
+        processed: expensiveCalculation(item)
+      }));
+  }, [data, filter]);
+
+  // Memoize callbacks to prevent unnecessary re-renders
+  const handleUpdate = useCallback((id: string) => {
+    onUpdate(id);
+  }, [onUpdate]);
+
+  // Memoize event handlers
+  const handleClick = useCallback((event: React.MouseEvent) => {
+    event.preventDefault();
+    // Handle click
+  }, []);
+
+  return (
+    <div>
+      {processedData.map(item => (
+        <ItemComponent 
+          key={item.id} 
+          item={item} 
+          onUpdate={handleUpdate}
+          onClick={handleClick}
+        />
+      ))}
+    </div>
+  );
+});
+
+// Good: Lazy loading with Suspense
+const LazyDashboard = React.lazy(() => import('./Dashboard'));
+const LazySettings = React.lazy(() => import('./Settings'));
+
+function App() {
+  return (
+    <Router>
+      <Suspense fallback={<div>Loading...</div>}>
+        <Routes>
+          <Route path="/dashboard" element={<LazyDashboard />} />
+          <Route path="/settings" element={<LazySettings />} />
+        </Routes>
+      </Suspense>
+    </Router>
+  );
+}
+```
+
+## Bundle Optimization
+- Analyze bundle size with webpack-bundle-analyzer
+- Use tree shaking effectively
+- Implement proper code splitting
+- Optimize third-party libraries
+
+```typescript
+// Good: Tree-shakable imports
+import { debounce } from 'lodash-es';
+import { format } from 'date-fns';
+
+// Avoid: Full library imports
+// import _ from 'lodash';
+// import * as dateFns from 'date-fns';
+
+// Good: Dynamic imports for large libraries
+const loadChartLibrary = () => import('chart.js');
+
+async function ChartComponent() {
+  const { Chart } = await loadChartLibrary();
+  // Use Chart
+}
+
+// Good: Conditional imports
+const loadEditor = async () => {
+  if (typeof window !== 'undefined') {
+    const { Editor } = await import('@monaco-editor/react');
+    return Editor;
+  }
+  return null;
+};
+```
+
+## Data Fetching Optimization
+- Implement proper caching strategies
+- Use React Query for server state management
+- Implement optimistic updates
+- Use proper loading and error states
+
+```typescript
+// Good: React Query for data fetching
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+
+function UserList() {
+  const queryClient = useQueryClient();
+  
+  const { data: users, isLoading, error } = useQuery({
+    queryKey: ['users'],
+    queryFn: fetchUsers,
+    staleTime: 5 * 60 * 1000, // 5 minutes
+    cacheTime: 10 * 60 * 1000, // 10 minutes
+  });
+
+  const createUserMutation = useMutation({
+    mutationFn: createUser,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['users'] });
+    },
+    onError: (error) => {
+      console.error('Failed to create user:', error);
+    }
+  });
+
+  if (isLoading) return <div>Loading...</div>;
+  if (error) return <div>Error loading users</div>;
+
+  return (
+    <div>
+      {users?.map(user => (
+        <UserCard key={user.id} user={user} />
+      ))}
+    </div>
+  );
+}
+
+// Good: Optimistic updates
+function useOptimisticUpdate() {
+  const queryClient = useQueryClient();
+  
+  const updateUserMutation = useMutation({
+    mutationFn: updateUser,
+    onMutate: async (newUser) => {
+      await queryClient.cancelQueries({ queryKey: ['users'] });
+      const previousUsers = queryClient.getQueryData(['users']);
+      
+      queryClient.setQueryData(['users'], (old: User[]) => 
+        old.map(user => user.id === newUser.id ? newUser : user)
+      );
+      
+      return { previousUsers };
+    },
+    onError: (err, newUser, context) => {
+      queryClient.setQueryData(['users'], context?.previousUsers);
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['users'] });
+    }
+  });
+
+  return updateUserMutation;
+}
+```
+
+## Memory Management
+- Avoid memory leaks with proper cleanup
+- Use WeakMap/WeakSet for temporary references
+- Implement proper event listener cleanup
+- Use AbortController for canceling requests
+
+```typescript
+// Good: Proper cleanup in useEffect
+function useWebSocket(url: string) {
+  const [socket, setSocket] = useState<WebSocket | null>(null);
+  const [message, setMessage] = useState<string>('');
+
+  useEffect(() => {
+    const ws = new WebSocket(url);
+    setSocket(ws);
+
+    ws.onmessage = (event) => {
+      setMessage(event.data);
+    };
+
+    return () => {
+      ws.close();
+    };
+  }, [url]);
+
+  return { socket, message };
+}
+
+// Good: AbortController for request cancellation
+function useApiCall<T>(url: string) {
+  const [data, setData] = useState<T | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    
+    const fetchData = async () => {
+      setLoading(true);
+      try {
+        const response = await fetch(url, {
+          signal: controller.signal
+        });
+        const result = await response.json();
+        setData(result);
+      } catch (error) {
+        if (error.name !== 'AbortError') {
+          console.error('Fetch error:', error);
+        }
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchData();
+
+    return () => {
+      controller.abort();
+    };
+  }, [url]);
+
+  return { data, loading };
+}
+```
+
+## Rendering Optimization
+- Use virtualization for large lists
+- Implement proper key props
+- Avoid unnecessary re-renders
+- Use React DevTools Profiler
+
+```typescript
+// Good: Virtualized list for performance
+import { FixedSizeList as List } from 'react-window';
+
+interface VirtualizedListProps {
+  items: any[];
+  height: number;
+  itemHeight: number;
+}
+
+function VirtualizedList({ items, height, itemHeight }: VirtualizedListProps) {
+  const Row = ({ index, style }: { index: number; style: React.CSSProperties }) => (
+    <div style={style}>
+      <ItemComponent item={items[index]} />
+    </div>
+  );
+
+  return (
+    <List
+      height={height}
+      itemCount={items.length}
+      itemSize={itemHeight}
+      width="100%"
+    >
+      {Row}
+    </List>
+  );
+}
+
+// Good: Proper key usage
+function UserList({ users }: { users: User[] }) {
+  return (
+    <div>
+      {users.map(user => (
+        <UserCard 
+          key={user.id} // Use stable, unique identifier
+          user={user} 
+        />
+      ))}
+    </div>
+  );
+}
+
+// Good: Preventing unnecessary re-renders
+const MemoizedUserCard = React.memo(UserCard, (prevProps, nextProps) => {
+  return prevProps.user.id === nextProps.user.id && 
+         prevProps.user.name === nextProps.user.name;
+});
+```
+
+## Caching Strategies
+- Implement proper HTTP caching
+- Use service workers for offline caching
+- Cache expensive computations
+- Use Redis for server-side caching
+
+```typescript
+// Good: HTTP caching with Next.js
+export async function getStaticProps() {
+  const data = await fetchData();
+  
+  return {
+    props: { data },
+    revalidate: 3600, // Revalidate every hour
+  };
+}
+
+// Good: Service worker caching
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/sw.js');
+}
+
+// Good: Memoized expensive calculations
+function ExpensiveComponent({ data }: { data: ComplexData[] }) {
+  const expensiveValue = useMemo(() => {
+    return data.reduce((acc, item) => {
+      return acc + performExpensiveCalculation(item);
+    }, 0);
+  }, [data]);
+
+  return <div>{expensiveValue}</div>;
+}
+```
+
+## Performance Monitoring
+- Implement performance monitoring
+- Use Web Vitals for Core Web Vitals
+- Monitor bundle size
+- Track user interactions
+
+```typescript
+// Good: Performance monitoring
+import { getCLS, getFID, getFCP, getLCP, getTTFB } from 'web-vitals';
+
+function reportWebVitals(metric: any) {
+  console.log(metric);
+  
+  // Send to analytics service
+  if (typeof window !== 'undefined' && window.gtag) {
+    window.gtag('event', metric.name, {
+      event_category: 'Web Vitals',
+      value: Math.round(metric.value),
+      event_label: metric.id,
+      non_interaction: true,
+    });
+  }
+}
+
+// Good: Bundle size monitoring
+const bundleAnalyzer = require('@next/bundle-analyzer')({
+  enabled: process.env.ANALYZE === 'true',
+});
+
+module.exports = bundleAnalyzer({
+  // Next.js config
+});
+```
+
+## Database and API Optimization
+- Implement proper database indexing
+- Use connection pooling
+- Implement query optimization
+- Use proper pagination
+
+```typescript
+// Good: Paginated API endpoint
+export async function GET(request: NextRequest) {
+  const { searchParams } = new URL(request.url);
+  const page = parseInt(searchParams.get('page') || '1');
+  const limit = parseInt(searchParams.get('limit') || '10');
+  const offset = (page - 1) * limit;
+
+  const users = await db.user.findMany({
+    take: limit,
+    skip: offset,
+    orderBy: { createdAt: 'desc' },
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      createdAt: true,
+    },
+  });
+
+  const total = await db.user.count();
+
+  return NextResponse.json({
+    data: users,
+    pagination: {
+      page,
+      limit,
+      total,
+      pages: Math.ceil(total / limit),
+    },
+  });
+}
+```

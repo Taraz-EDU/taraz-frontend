@@ -1,0 +1,508 @@
+---
+description: Error handling patterns and user experience best practices
+globs: ["**/*.ts", "**/*.tsx", "app/**/*", "components/**/*"]
+alwaysApply: true
+---
+
+# Error Handling Rules
+
+## Error Boundaries
+- Implement error boundaries for graceful error handling
+- Provide fallback UI for component errors
+- Log errors appropriately
+- Use different error boundaries for different sections
+
+```typescript
+// Good: Error boundary implementation
+interface ErrorBoundaryState {
+  hasError: boolean;
+  error?: Error;
+  errorInfo?: ErrorInfo;
+}
+
+class ErrorBoundary extends Component<
+  { children: React.ReactNode; fallback?: React.ComponentType<{ error: Error; retry: () => void }> },
+  ErrorBoundaryState
+> {
+  constructor(props: any) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError(error: Error): ErrorBoundaryState {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    console.error('Error caught by boundary:', error, errorInfo);
+    
+    // Log to error reporting service
+    if (typeof window !== 'undefined') {
+      // Send to error reporting service
+      this.logError(error, errorInfo);
+    }
+  }
+
+  private logError = (error: Error, errorInfo: ErrorInfo) => {
+    // Implementation for error logging service
+    console.error('Logged error:', { error, errorInfo });
+  };
+
+  private handleRetry = () => {
+    this.setState({ hasError: false, error: undefined });
+  };
+
+  render() {
+    if (this.state.hasError) {
+      const FallbackComponent = this.props.fallback;
+      return FallbackComponent ? (
+        <FallbackComponent 
+          error={this.state.error!} 
+          retry={this.handleRetry} 
+        />
+      ) : (
+        <div className="error-fallback">
+          <h2>Something went wrong</h2>
+          <button onClick={this.handleRetry}>Try again</button>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
+}
+
+// Good: Custom error fallback component
+function ErrorFallback({ error, retry }: { error: Error; retry: () => void }) {
+  return (
+    <div className="min-h-screen flex items-center justify-center">
+      <div className="text-center">
+        <h1 className="text-2xl font-bold text-red-600 mb-4">
+          Oops! Something went wrong
+        </h1>
+        <p className="text-gray-600 mb-6">
+          We're sorry, but something unexpected happened.
+        </p>
+        <button
+          onClick={retry}
+          className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+        >
+          Try Again
+        </button>
+      </div>
+    </div>
+  );
+}
+```
+
+## API Error Handling
+- Implement proper error handling for API calls
+- Use consistent error response format
+- Provide meaningful error messages
+- Handle different HTTP status codes
+
+```typescript
+// Good: API error handling
+interface ApiError {
+  message: string;
+  code: string;
+  details?: any;
+}
+
+class ApiClient {
+  async request<T>(url: string, options: RequestInit = {}): Promise<T> {
+    try {
+      const response = await fetch(url, {
+        ...options,
+        headers: {
+          'Content-Type': 'application/json',
+          ...options.headers,
+        },
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new ApiError(
+          errorData.message || `HTTP ${response.status}`,
+          errorData.code || 'HTTP_ERROR',
+          { status: response.status, statusText: response.statusText }
+        );
+      }
+
+      return await response.json();
+    } catch (error) {
+      if (error instanceof ApiError) {
+        throw error;
+      }
+      
+      // Network or other errors
+      throw new ApiError(
+        'Network error occurred',
+        'NETWORK_ERROR',
+        { originalError: error }
+      );
+    }
+  }
+}
+
+// Good: Error handling in components
+function useApiCall<T>(url: string) {
+  const [data, setData] = useState<T | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<ApiError | null>(null);
+
+  const execute = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    
+    try {
+      const result = await apiClient.request<T>(url);
+      setData(result);
+    } catch (err) {
+      setError(err as ApiError);
+    } finally {
+      setLoading(false);
+    }
+  }, [url]);
+
+  return { data, loading, error, execute };
+}
+```
+
+## Form Error Handling
+- Validate inputs on both client and server
+- Display field-specific errors
+- Provide clear error messages
+- Handle submission errors gracefully
+
+```typescript
+// Good: Form error handling with react-hook-form
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
+
+const schema = z.object({
+  email: z.string().email('Please enter a valid email'),
+  password: z.string().min(8, 'Password must be at least 8 characters'),
+  confirmPassword: z.string(),
+}).refine((data) => data.password === data.confirmPassword, {
+  message: "Passwords don't match",
+  path: ["confirmPassword"],
+});
+
+type FormData = z.infer<typeof schema>;
+
+function UserForm() {
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  
+  const { register, handleSubmit, formState: { errors, isSubmitting } } = useForm<FormData>({
+    resolver: zodResolver(schema)
+  });
+
+  const onSubmit = async (data: FormData) => {
+    try {
+      setSubmitError(null);
+      await createUser(data);
+      // Handle success
+    } catch (error) {
+      if (error instanceof ApiError) {
+        setSubmitError(error.message);
+      } else {
+        setSubmitError('An unexpected error occurred');
+      }
+    }
+  };
+
+  return (
+    <form onSubmit={handleSubmit(onSubmit)}>
+      {submitError && (
+        <div role="alert" className="error-message">
+          {submitError}
+        </div>
+      )}
+      
+      <div>
+        <label htmlFor="email">Email</label>
+        <input
+          id="email"
+          type="email"
+          {...register('email')}
+          aria-invalid={!!errors.email}
+          aria-describedby={errors.email ? 'email-error' : undefined}
+        />
+        {errors.email && (
+          <div id="email-error" role="alert">
+            {errors.email.message}
+          </div>
+        )}
+      </div>
+      
+      <button type="submit" disabled={isSubmitting}>
+        {isSubmitting ? 'Creating...' : 'Create Account'}
+      </button>
+    </form>
+  );
+}
+```
+
+## Async Error Handling
+- Handle errors in async operations
+- Implement retry mechanisms
+- Use proper loading states
+- Provide user feedback
+
+```typescript
+// Good: Async error handling with retry
+function useAsyncOperation<T>(
+  operation: () => Promise<T>,
+  retryCount = 3
+) {
+  const [state, setState] = useState<{
+    data: T | null;
+    loading: boolean;
+    error: Error | null;
+    retryCount: number;
+  }>({
+    data: null,
+    loading: false,
+    error: null,
+    retryCount: 0
+  });
+
+  const execute = useCallback(async () => {
+    setState(prev => ({ ...prev, loading: true, error: null }));
+    
+    try {
+      const result = await operation();
+      setState({
+        data: result,
+        loading: false,
+        error: null,
+        retryCount: 0
+      });
+    } catch (error) {
+      const newRetryCount = state.retryCount + 1;
+      
+      if (newRetryCount < retryCount) {
+        setState(prev => ({
+          ...prev,
+          loading: false,
+          error: null,
+          retryCount: newRetryCount
+        }));
+        
+        // Retry after delay
+        setTimeout(() => execute(), 1000 * newRetryCount);
+      } else {
+        setState(prev => ({
+          ...prev,
+          loading: false,
+          error: error as Error,
+          retryCount: newRetryCount
+        }));
+      }
+    }
+  }, [operation, retryCount, state.retryCount]);
+
+  const retry = useCallback(() => {
+    setState(prev => ({ ...prev, retryCount: 0 }));
+    execute();
+  }, [execute]);
+
+  return { ...state, execute, retry };
+}
+```
+
+## Error Logging and Monitoring
+- Implement proper error logging
+- Use error monitoring services
+- Track error patterns and trends
+- Implement alerting for critical errors
+
+```typescript
+// Good: Error logging service
+interface ErrorLog {
+  message: string;
+  stack?: string;
+  context: Record<string, any>;
+  timestamp: Date;
+  userId?: string;
+  sessionId?: string;
+}
+
+class ErrorLogger {
+  private static instance: ErrorLogger;
+  
+  static getInstance(): ErrorLogger {
+    if (!ErrorLogger.instance) {
+      ErrorLogger.instance = new ErrorLogger();
+    }
+    return ErrorLogger.instance;
+  }
+
+  log(error: Error, context: Record<string, any> = {}) {
+    const errorLog: ErrorLog = {
+      message: error.message,
+      stack: error.stack,
+      context: {
+        ...context,
+        userAgent: navigator.userAgent,
+        url: window.location.href,
+        timestamp: new Date().toISOString()
+      },
+      timestamp: new Date()
+    };
+
+    // Send to logging service
+    this.sendToLoggingService(errorLog);
+    
+    // Also log to console in development
+    if (process.env.NODE_ENV === 'development') {
+      console.error('Error logged:', errorLog);
+    }
+  }
+
+  private async sendToLoggingService(errorLog: ErrorLog) {
+    try {
+      await fetch('/api/logs/error', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(errorLog)
+      });
+    } catch (err) {
+      console.error('Failed to send error log:', err);
+    }
+  }
+}
+
+// Good: Global error handler
+function setupGlobalErrorHandling() {
+  const errorLogger = ErrorLogger.getInstance();
+
+  // Unhandled promise rejections
+  window.addEventListener('unhandledrejection', (event) => {
+    errorLogger.log(new Error(event.reason), {
+      type: 'unhandledrejection',
+      reason: event.reason
+    });
+  });
+
+  // Uncaught errors
+  window.addEventListener('error', (event) => {
+    errorLogger.log(event.error, {
+      type: 'uncaught',
+      filename: event.filename,
+      lineno: event.lineno,
+      colno: event.colno
+    });
+  });
+}
+```
+
+## User-Friendly Error Messages
+- Provide clear, actionable error messages
+- Avoid technical jargon
+- Offer solutions when possible
+- Use consistent error message format
+
+```typescript
+// Good: User-friendly error messages
+const ERROR_MESSAGES = {
+  NETWORK_ERROR: {
+    title: 'Connection Problem',
+    message: 'Please check your internet connection and try again.',
+    action: 'Retry'
+  },
+  VALIDATION_ERROR: {
+    title: 'Invalid Information',
+    message: 'Please check the highlighted fields and try again.',
+    action: 'Review Form'
+  },
+  SERVER_ERROR: {
+    title: 'Server Error',
+    message: 'Something went wrong on our end. Please try again later.',
+    action: 'Try Again'
+  },
+  NOT_FOUND: {
+    title: 'Not Found',
+    message: 'The page or resource you\'re looking for doesn\'t exist.',
+    action: 'Go Home'
+  }
+} as const;
+
+function ErrorDisplay({ error }: { error: ApiError }) {
+  const errorConfig = ERROR_MESSAGES[error.code as keyof typeof ERROR_MESSAGES] || {
+    title: 'Something went wrong',
+    message: error.message,
+    action: 'Try Again'
+  };
+
+  return (
+    <div className="error-display">
+      <h3>{errorConfig.title}</h3>
+      <p>{errorConfig.message}</p>
+      <button onClick={() => window.location.reload()}>
+        {errorConfig.action}
+      </button>
+    </div>
+  );
+}
+```
+
+## Error Recovery Strategies
+- Implement graceful degradation
+- Provide alternative paths
+- Use circuit breaker pattern
+- Implement fallback mechanisms
+
+```typescript
+// Good: Circuit breaker pattern
+class CircuitBreaker {
+  private failures = 0;
+  private lastFailureTime = 0;
+  private state: 'CLOSED' | 'OPEN' | 'HALF_OPEN' = 'CLOSED';
+  
+  constructor(
+    private threshold: number = 5,
+    private timeout: number = 60000
+  ) {}
+
+  async execute<T>(operation: () => Promise<T>): Promise<T> {
+    if (this.state === 'OPEN') {
+      if (Date.now() - this.lastFailureTime > this.timeout) {
+        this.state = 'HALF_OPEN';
+      } else {
+        throw new Error('Circuit breaker is OPEN');
+      }
+    }
+
+    try {
+      const result = await operation();
+      this.onSuccess();
+      return result;
+    } catch (error) {
+      this.onFailure();
+      throw error;
+    }
+  }
+
+  private onSuccess() {
+    this.failures = 0;
+    this.state = 'CLOSED';
+  }
+
+  private onFailure() {
+    this.failures++;
+    this.lastFailureTime = Date.now();
+    
+    if (this.failures >= this.threshold) {
+      this.state = 'OPEN';
+    }
+  }
+}
+
+// Good: Fallback mechanism
+function useFallbackData<T>(primaryData: T | null, fallbackData: T) {
+  return primaryData ?? fallbackData;
+}
+```

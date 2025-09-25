@@ -1,0 +1,550 @@
+---
+description: Security best practices for Next.js applications
+globs: ["**/*.ts", "**/*.tsx", "app/**/*", "middleware.ts", "**/api/**/*"]
+alwaysApply: true
+---
+
+# Security Rules
+
+## Input Validation and Sanitization
+- Validate all user inputs on both client and server
+- Sanitize data before storing or displaying
+- Use proper TypeScript types for validation
+- Implement rate limiting for API endpoints
+
+```typescript
+// Good: Input validation with Zod
+import { z } from 'zod';
+
+const userSchema = z.object({
+  name: z.string().min(1).max(100).trim(),
+  email: z.string().email(),
+  age: z.number().int().min(18).max(120),
+  password: z.string().min(8).regex(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/, 
+    'Password must contain uppercase, lowercase, and number')
+});
+
+// Good: API route validation
+export async function POST(request: NextRequest) {
+  try {
+    const body = await request.json();
+    const validatedData = userSchema.parse(body);
+    
+    // Process validated data
+    const user = await createUser(validatedData);
+    return NextResponse.json(user, { status: 201 });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return NextResponse.json(
+        { error: 'Validation failed', details: error.errors },
+        { status: 400 }
+      );
+    }
+    return NextResponse.json(
+      { error: 'Internal server error' },
+      { status: 500 }
+    );
+  }
+}
+```
+
+## Authentication and Authorization
+- Implement proper authentication flows
+- Use secure session management
+- Implement role-based access control
+- Use JWT tokens securely
+
+```typescript
+// Good: Secure authentication
+import { NextAuthOptions } from 'next-auth';
+import CredentialsProvider from 'next-auth/providers/credentials';
+import bcrypt from 'bcryptjs';
+
+export const authOptions: NextAuthOptions = {
+  providers: [
+    CredentialsProvider({
+      name: 'credentials',
+      credentials: {
+        email: { label: 'Email', type: 'email' },
+        password: { label: 'Password', type: 'password' }
+      },
+      async authorize(credentials) {
+        if (!credentials?.email || !credentials?.password) {
+          return null;
+        }
+
+        const user = await getUserByEmail(credentials.email);
+        if (!user) {
+          return null;
+        }
+
+        const isPasswordValid = await bcrypt.compare(
+          credentials.password,
+          user.password
+        );
+
+        if (!isPasswordValid) {
+          return null;
+        }
+
+        return {
+          id: user.id,
+          email: user.email,
+          name: user.name,
+          role: user.role
+        };
+      }
+    })
+  ],
+  session: {
+    strategy: 'jwt',
+    maxAge: 30 * 24 * 60 * 60, // 30 days
+  },
+  jwt: {
+    maxAge: 30 * 24 * 60 * 60, // 30 days
+  },
+  callbacks: {
+    async jwt({ token, user }) {
+      if (user) {
+        token.role = user.role;
+      }
+      return token;
+    },
+    async session({ session, token }) {
+      if (token) {
+        session.user.id = token.sub!;
+        session.user.role = token.role as string;
+      }
+      return session;
+    }
+  }
+};
+
+// Good: Authorization middleware
+export function withAuth(handler: NextApiHandler) {
+  return async (req: NextApiRequest, res: NextApiResponse) => {
+    const session = await getServerSession(req, res, authOptions);
+    
+    if (!session) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    
+    return handler(req, res);
+  };
+}
+
+// Good: Role-based access control
+export function requireRole(role: string) {
+  return function (handler: NextApiHandler) {
+    return async (req: NextApiRequest, res: NextApiResponse) => {
+      const session = await getServerSession(req, res, authOptions);
+      
+      if (!session || session.user.role !== role) {
+        return res.status(403).json({ error: 'Forbidden' });
+      }
+      
+      return handler(req, res);
+    };
+  };
+}
+```
+
+## HTTPS and Security Headers
+- Implement proper security headers
+- Use HTTPS in production
+- Configure Content Security Policy
+- Implement HSTS
+
+```typescript
+// Good: Security headers middleware
+export function middleware(request: NextRequest) {
+  const response = NextResponse.next();
+  
+  // Security headers
+  response.headers.set('X-Frame-Options', 'DENY');
+  response.headers.set('X-Content-Type-Options', 'nosniff');
+  response.headers.set('Referrer-Policy', 'origin-when-cross-origin');
+  response.headers.set('X-XSS-Protection', '1; mode=block');
+  
+  // Content Security Policy
+  response.headers.set(
+    'Content-Security-Policy',
+    "default-src 'self'; script-src 'self' 'unsafe-eval' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' https:;"
+  );
+  
+  // HSTS
+  if (request.nextUrl.protocol === 'https:') {
+    response.headers.set(
+      'Strict-Transport-Security',
+      'max-age=31536000; includeSubDomains; preload'
+    );
+  }
+  
+  return response;
+}
+
+// Good: Next.js config security
+const nextConfig: NextConfig = {
+  async headers() {
+    return [
+      {
+        source: '/(.*)',
+        headers: [
+          {
+            key: 'X-Frame-Options',
+            value: 'DENY',
+          },
+          {
+            key: 'X-Content-Type-Options',
+            value: 'nosniff',
+          },
+          {
+            key: 'Referrer-Policy',
+            value: 'origin-when-cross-origin',
+          },
+        ],
+      },
+    ];
+  },
+};
+```
+
+## Environment Variables and Secrets
+- Never commit secrets to version control
+- Use proper environment variable validation
+- Implement secret rotation
+- Use different secrets for different environments
+
+```typescript
+// Good: Environment variable validation
+const requiredEnvVars = {
+  DATABASE_URL: process.env.DATABASE_URL,
+  NEXTAUTH_SECRET: process.env.NEXTAUTH_SECRET,
+  NEXTAUTH_URL: process.env.NEXTAUTH_URL,
+  JWT_SECRET: process.env.JWT_SECRET,
+} as const;
+
+for (const [key, value] of Object.entries(requiredEnvVars)) {
+  if (!value) {
+    throw new Error(`Missing required environment variable: ${key}`);
+  }
+}
+
+// Good: Secret validation
+function validateSecret(secret: string): boolean {
+  if (!secret || secret.length < 32) {
+    throw new Error('Secret must be at least 32 characters long');
+  }
+  return true;
+}
+
+validateSecret(process.env.NEXTAUTH_SECRET!);
+```
+
+## SQL Injection Prevention
+- Use parameterized queries
+- Validate and sanitize database inputs
+- Use ORM with proper escaping
+- Implement database access controls
+
+```typescript
+// Good: Parameterized queries with Prisma
+export async function getUserById(id: string) {
+  // Prisma automatically escapes parameters
+  const user = await prisma.user.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      // Never select password in queries
+    }
+  });
+  
+  return user;
+}
+
+// Good: Input validation before database operations
+export async function createUser(userData: CreateUserInput) {
+  // Validate input
+  const validatedData = userSchema.parse(userData);
+  
+  // Hash password
+  const hashedPassword = await bcrypt.hash(validatedData.password, 12);
+  
+  // Create user with validated data
+  const user = await prisma.user.create({
+    data: {
+      ...validatedData,
+      password: hashedPassword,
+    },
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      createdAt: true,
+    }
+  });
+  
+  return user;
+}
+```
+
+## XSS Prevention
+- Sanitize user-generated content
+- Use proper HTML escaping
+- Implement Content Security Policy
+- Use trusted libraries for HTML parsing
+
+```typescript
+// Good: XSS prevention
+import DOMPurify from 'dompurify';
+
+function SafeHTML({ content }: { content: string }) {
+  const sanitizedContent = DOMPurify.sanitize(content, {
+    ALLOWED_TAGS: ['p', 'br', 'strong', 'em'],
+    ALLOWED_ATTR: []
+  });
+  
+  return (
+    <div 
+      dangerouslySetInnerHTML={{ __html: sanitizedContent }}
+    />
+  );
+}
+
+// Good: Input sanitization
+function sanitizeInput(input: string): string {
+  return input
+    .trim()
+    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+    .replace(/javascript:/gi, '')
+    .replace(/on\w+\s*=/gi, '');
+}
+```
+
+## CSRF Protection
+- Implement CSRF tokens
+- Use SameSite cookies
+- Validate origin headers
+- Implement proper CORS policies
+
+```typescript
+// Good: CSRF protection
+import { getCsrfToken } from 'next-auth/react';
+
+export function useCSRF() {
+  const [csrfToken, setCsrfToken] = useState<string | null>(null);
+  
+  useEffect(() => {
+    getCsrfToken().then(setCsrfToken);
+  }, []);
+  
+  return csrfToken;
+}
+
+// Good: API route CSRF protection
+export async function POST(request: NextRequest) {
+  const csrfToken = request.headers.get('x-csrf-token');
+  const session = await getServerSession(authOptions);
+  
+  if (!session || !csrfToken) {
+    return NextResponse.json({ error: 'CSRF token missing' }, { status: 403 });
+  }
+  
+  // Validate CSRF token
+  const isValidToken = await validateCSRFToken(csrfToken, session.user.id);
+  if (!isValidToken) {
+    return NextResponse.json({ error: 'Invalid CSRF token' }, { status: 403 });
+  }
+  
+  // Process request
+}
+```
+
+## File Upload Security
+- Validate file types and sizes
+- Scan uploaded files for malware
+- Store files outside web root
+- Implement proper access controls
+
+```typescript
+// Good: Secure file upload
+import { writeFile } from 'fs/promises';
+import { join } from 'path';
+import { v4 as uuidv4 } from 'uuid';
+
+const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/gif'];
+const MAX_SIZE = 5 * 1024 * 1024; // 5MB
+
+export async function POST(request: NextRequest) {
+  try {
+    const formData = await request.formData();
+    const file = formData.get('file') as File;
+    
+    if (!file) {
+      return NextResponse.json({ error: 'No file provided' }, { status: 400 });
+    }
+    
+    // Validate file type
+    if (!ALLOWED_TYPES.includes(file.type)) {
+      return NextResponse.json({ error: 'Invalid file type' }, { status: 400 });
+    }
+    
+    // Validate file size
+    if (file.size > MAX_SIZE) {
+      return NextResponse.json({ error: 'File too large' }, { status: 400 });
+    }
+    
+    // Generate secure filename
+    const fileExtension = file.name.split('.').pop();
+    const fileName = `${uuidv4()}.${fileExtension}`;
+    const filePath = join(process.cwd(), 'uploads', fileName);
+    
+    // Save file
+    const bytes = await file.arrayBuffer();
+    await writeFile(filePath, Buffer.from(bytes));
+    
+    return NextResponse.json({ 
+      success: true, 
+      fileName,
+      url: `/uploads/${fileName}`
+    });
+  } catch (error) {
+    return NextResponse.json({ error: 'Upload failed' }, { status: 500 });
+  }
+}
+```
+
+## Rate Limiting
+- Implement rate limiting for API endpoints
+- Use different limits for different operations
+- Implement progressive delays
+- Monitor and log rate limit violations
+
+```typescript
+// Good: Rate limiting middleware
+import { Ratelimit } from '@upstash/ratelimit';
+import { Redis } from '@upstash/redis';
+
+const redis = new Redis({
+  url: process.env.UPSTASH_REDIS_REST_URL!,
+  token: process.env.UPSTASH_REDIS_REST_TOKEN!,
+});
+
+const ratelimit = new Ratelimit({
+  redis,
+  limiter: Ratelimit.slidingWindow(10, '10 s'),
+});
+
+export async function middleware(request: NextRequest) {
+  const ip = request.ip ?? '127.0.0.1';
+  const { success } = await ratelimit.limit(ip);
+  
+  if (!success) {
+    return new Response('Rate limit exceeded', { status: 429 });
+  }
+  
+  return NextResponse.next();
+}
+
+// Good: Different rate limits for different endpoints
+const authRatelimit = new Ratelimit({
+  redis,
+  limiter: Ratelimit.slidingWindow(5, '1 m'), // 5 attempts per minute
+});
+
+const apiRatelimit = new Ratelimit({
+  redis,
+  limiter: Ratelimit.slidingWindow(100, '1 m'), // 100 requests per minute
+});
+```
+
+## Logging and Monitoring
+- Implement security event logging
+- Monitor for suspicious activities
+- Set up alerts for security violations
+- Implement audit trails
+
+```typescript
+// Good: Security logging
+import { logger } from './logger';
+
+export function logSecurityEvent(event: string, details: any) {
+  logger.warn('Security Event', {
+    event,
+    details,
+    timestamp: new Date().toISOString(),
+    ip: getClientIP(),
+    userAgent: getUserAgent(),
+  });
+}
+
+// Good: Audit trail
+export async function createAuditLog(action: string, resource: string, userId: string) {
+  await prisma.auditLog.create({
+    data: {
+      action,
+      resource,
+      userId,
+      timestamp: new Date(),
+      ip: getClientIP(),
+      userAgent: getUserAgent(),
+    }
+  });
+}
+```
+
+## Dependency Security
+- Regularly update dependencies
+- Use tools like `npm audit`
+- Implement automated security scanning
+- Use only trusted packages
+
+```json
+// Good: Package.json with security scripts
+{
+  "scripts": {
+    "audit": "npm audit",
+    "audit:fix": "npm audit fix",
+    "security:check": "npm audit --audit-level moderate",
+    "deps:update": "npm update",
+    "deps:check": "npm outdated"
+  }
+}
+```
+
+## Data Encryption
+- Encrypt sensitive data at rest
+- Use proper encryption algorithms
+- Implement key rotation
+- Secure key management
+
+```typescript
+// Good: Data encryption
+import crypto from 'crypto';
+
+const algorithm = 'aes-256-gcm';
+const secretKey = process.env.ENCRYPTION_KEY!;
+
+export function encrypt(text: string): string {
+  const iv = crypto.randomBytes(16);
+  const cipher = crypto.createCipher(algorithm, secretKey);
+  
+  let encrypted = cipher.update(text, 'utf8', 'hex');
+  encrypted += cipher.final('hex');
+  
+  return iv.toString('hex') + ':' + encrypted;
+}
+
+export function decrypt(encryptedText: string): string {
+  const [ivHex, encrypted] = encryptedText.split(':');
+  const iv = Buffer.from(ivHex, 'hex');
+  const decipher = crypto.createDecipher(algorithm, secretKey);
+  
+  let decrypted = decipher.update(encrypted, 'hex', 'utf8');
+  decrypted += decipher.final('utf8');
+  
+  return decrypted;
+}
+```
